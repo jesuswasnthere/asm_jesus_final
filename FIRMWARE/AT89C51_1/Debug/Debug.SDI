@@ -1,0 +1,259 @@
+,,,;--------------------------------------------------------
+,,,; Sistema Hidropónico con Selección de Recetas y Control de Frecuencia (8051)
+,,,; Cambio de receta con botón (P3.2)
+,,,; LEDs de receta en P1.0, P1.1, P1.2 (lógica normal)
+,,,; Bombas controladas en P2.0 (Agua), P2.1 (Nitrógeno), P2.2 (Fósforo), P2.3 (Potasio)
+,,,; Control de frecuencia: cada receta tiene su intervalo de tiempo entre riegos
+,,,;--------------------------------------------------------
+,,,
+,,,; Definiciones de bits para las bombas
+000B,,,AGUA      BIT P2.0
+000B,,,NITROGENO BIT P2.1
+000B,,,FOSFORO   BIT P2.2
+000B,,,POTASIO   BIT P2.3
+,,,
+,,,ORG 0000H
+0000,02 00 56,,    LJMP INICIO
+,,,
+,,,ORG 0030H
+,,,;----------------------------------------------
+,,,; Subrutina de retardo de 50 ms usando Timer 0
+,,,;----------------------------------------------
+0030,,DELAY_50MIL,DELAY_50MIL:
+0030,C2 8D,,    CLR TF0
+0032,75 89 01,,    MOV TMOD, #00000001B   ; Timer0, modo 1 (16 bits)
+0035,75 8C 3C,,    MOV TH0, #3CH          ; Valores para 50 ms con 11.0592 MHz
+0038,75 8A B0,,    MOV TL0, #0B0H
+003B,D2 8C,,    SETB TR0
+003D,,ESPERAR_50MIL,ESPERAR_50MIL:
+003D,30 8D FD,,    JNB TF0, ESPERAR_50MIL
+0040,C2 8C,,    CLR TR0
+0042,C2 8D,,    CLR TF0
+0044,22,,    RET
+,,,
+,,,;----------------------------------------------
+,,,; Subrutina de retardo de 1 segundo (20 ciclos de 50ms)
+,,,;----------------------------------------------
+0045,,DELAY_1SEG,DELAY_1SEG:
+0045,7F 14,,    MOV R7, #20
+0047,,LOOP_1SEG,LOOP_1SEG:
+0047,11 30,,    ACALL DELAY_50MIL
+0049,DF FC,,    DJNZ R7, LOOP_1SEG
+004B,22,,    RET
+,,,
+,,,;----------------------------------------------
+,,,; Subrutina de retardo variable en minutos
+,,,; Entrada: A = minutos a esperar
+,,,;----------------------------------------------
+004C,,DELAY_MINUTOS,DELAY_MINUTOS:
+004C,FE,,    MOV R6, A            ; Guarda minutos en R6
+004D,,LOOP_MINUTOS,LOOP_MINUTOS:
+004D,7D 3C,,    MOV R5, #60          ; 60 segundos por minuto
+004F,,LOOP_SEGUNDOS,LOOP_SEGUNDOS:
+004F,11 45,,    ACALL DELAY_1SEG
+0051,DD FC,,    DJNZ R5, LOOP_SEGUNDOS
+0053,DE F8,,    DJNZ R6, LOOP_MINUTOS
+0055,22,,    RET
+,,,
+,,,;----------------------------------------------
+,,,; Programa principal
+,,,;----------------------------------------------
+0056,,INICIO,INICIO:
+0056,75 81 7F,,    MOV SP, #7FH
+0059,78 00,,    MOV R0, #0           ; Receta actual (0, 1, 2)
+005B,75 90 01,,    MOV P1, #01H         ; Enciende LED receta 0 (P1.0=1)
+005E,C2 A0,,    CLR P2.0             ; Bombas apagadas
+0060,C2 A1,,    CLR P2.1
+0062,C2 A2,,    CLR P2.2
+0064,C2 A3,,    CLR P2.3
+,,,
+,,,;----------------------------------------------
+,,,; Bucle principal: Verifica cambio de receta y ejecuta riego
+,,,;----------------------------------------------
+0066,,BUCLE_PRINCIPAL,BUCLE_PRINCIPAL:
+,,,    ; Verificar si hay cambio de receta
+0066,30 B2 26,,    JNB P3.2, CAMBIAR_RECETA
+,,,
+,,,    ; Ejecutar ciclo de riego según receta actual
+0069,E8,,    MOV A, R0
+006A,B4 00 04,,    CJNE A, #0, CHECK_RECETA1
+006D,11 B2,,    ACALL EJECUTAR_RECETA0
+006F,80 09,,    SJMP ESPERAR_PROXIMA_FRECUENCIA
+,,,
+0071,,CHECK_RECETA1,CHECK_RECETA1:
+0071,B4 01 04,,    CJNE A, #1, CHECK_RECETA2
+0074,11 DB,,    ACALL EJECUTAR_RECETA1
+0076,80 02,,    SJMP ESPERAR_PROXIMA_FRECUENCIA
+,,,
+0078,,CHECK_RECETA2,CHECK_RECETA2:
+0078,31 04,,    ACALL EJECUTAR_RECETA2
+,,,
+007A,,ESPERAR_PROXIMA_FRECUENCIA,ESPERAR_PROXIMA_FRECUENCIA:
+,,,    ; Esperar según la frecuencia de la receta actual
+007A,E8,,    MOV A, R0
+007B,B4 00 04,,    CJNE A, #0, FREQ_RECETA1
+007E,74 1E,,    MOV A, #30           ; Receta 0: cada 30 minutos
+0080,80 09,,    SJMP APLICAR_FRECUENCIA
+,,,
+0082,,FREQ_RECETA1,FREQ_RECETA1:
+0082,B4 01 04,,    CJNE A, #1, FREQ_RECETA2
+0085,74 2D,,    MOV A, #45           ; Receta 1: cada 45 minutos
+0087,80 02,,    SJMP APLICAR_FRECUENCIA
+,,,
+0089,,FREQ_RECETA2,FREQ_RECETA2:
+0089,74 3C,,    MOV A, #60           ; Receta 2: cada 60 minutos
+,,,
+008B,,APLICAR_FRECUENCIA,APLICAR_FRECUENCIA:
+008B,11 4C,,    ACALL DELAY_MINUTOS
+008D,80 D7,,    SJMP BUCLE_PRINCIPAL
+,,,
+,,,;----------------------------------------------
+,,,; Cambio de receta
+,,,;----------------------------------------------
+008F,,CAMBIAR_RECETA,CAMBIAR_RECETA:
+,,,    ; Esperar a que se suelte el botón (antirrebote)
+008F,20 B2 FD,,    JB P3.2, CAMBIAR_RECETA
+,,,
+,,,    ; Retardo antirrebote
+0092,7F C8,,    MOV R7, #200
+0094,,DELAY_ANTIRREBOTE,DELAY_ANTIRREBOTE:
+0094,DF FE,,    DJNZ R7, DELAY_ANTIRREBOTE
+,,,
+,,,    ; Cambiar receta
+0096,08,,    INC R0
+0097,B8 03 02,,    CJNE R0, #3, ACTUALIZAR_LED
+009A,78 00,,    MOV R0, #0
+,,,
+009C,,ACTUALIZAR_LED,ACTUALIZAR_LED:
+009C,E8,,    MOV A, R0
+009D,B4 00 05,,    CJNE A, #0, LED_RECETA1
+00A0,75 90 01,,    MOV P1, #01H         ; LED receta 0 (P1.0=1)
+00A3,80 C1,,    SJMP BUCLE_PRINCIPAL
+,,,
+00A5,,LED_RECETA1,LED_RECETA1:
+00A5,B4 01 05,,    CJNE A, #1, LED_RECETA2
+00A8,75 90 02,,    MOV P1, #02H         ; LED receta 1 (P1.1=1)
+00AB,80 B9,,    SJMP BUCLE_PRINCIPAL
+,,,
+00AD,,LED_RECETA2,LED_RECETA2:
+00AD,75 90 04,,    MOV P1, #04H         ; LED receta 2 (P1.2=1)
+00B0,80 B4,,    SJMP BUCLE_PRINCIPAL
+,,,
+,,,;----------------------------------------------
+,,,; Subrutinas de ejecución de recetas
+,,,;----------------------------------------------
+00B2,,EJECUTAR_RECETA0,EJECUTAR_RECETA0:
+,,,    ;-------------------- RECETA 0 -----------------------
+,,,    ; Frecuencia: cada 30 minutos
+,,,    ; Agua: 3s, Nitrógeno: 2s, Fósforo: 2s, Potasio: 1s
+,,,
+,,,    ; Agua: 3s (60 ciclos)
+00B2,79 3C,,    MOV R1, #60
+00B4,D2 A0,,    SETB AGUA
+00B6,,AGUA_LOOP0,AGUA_LOOP0:
+00B6,11 30,,    ACALL DELAY_50MIL
+00B8,D9 FC,,    DJNZ R1, AGUA_LOOP0
+00BA,C2 A0,,    CLR AGUA
+,,,
+,,,    ; Nitrógeno: 2s (40 ciclos)
+00BC,7A 28,,    MOV R2, #40
+00BE,D2 A1,,    SETB NITROGENO
+00C0,,NITROGENO_LOOP0,NITROGENO_LOOP0:
+00C0,11 30,,    ACALL DELAY_50MIL
+00C2,DA FC,,    DJNZ R2, NITROGENO_LOOP0
+00C4,C2 A1,,    CLR NITROGENO
+,,,
+,,,    ; Fósforo: 2s (40 ciclos)
+00C6,7B 28,,    MOV R3, #40
+00C8,D2 A2,,    SETB FOSFORO
+00CA,,FOSFORO_LOOP0,FOSFORO_LOOP0:
+00CA,11 30,,    ACALL DELAY_50MIL
+00CC,DB FC,,    DJNZ R3, FOSFORO_LOOP0
+00CE,C2 A2,,    CLR FOSFORO
+,,,
+,,,    ; Potasio: 1s (20 ciclos)
+00D0,7C 14,,    MOV R4, #20
+00D2,D2 A3,,    SETB POTASIO
+00D4,,POTASIO_LOOP0,POTASIO_LOOP0:
+00D4,11 30,,    ACALL DELAY_50MIL
+00D6,DC FC,,    DJNZ R4, POTASIO_LOOP0
+00D8,C2 A3,,    CLR POTASIO
+00DA,22,,    RET
+,,,
+00DB,,EJECUTAR_RECETA1,EJECUTAR_RECETA1:
+,,,    ;-------------------- RECETA 1 -----------------------
+,,,    ; Frecuencia: cada 45 minutos
+,,,    ; Agua: 4s, Nitrógeno: 3s, Fósforo: 2s, Potasio: 2s
+,,,
+,,,    ; Agua: 4s (80 ciclos)
+00DB,79 50,,    MOV R1, #80
+00DD,D2 A0,,    SETB AGUA
+00DF,,AGUA_LOOP1,AGUA_LOOP1:
+00DF,11 30,,    ACALL DELAY_50MIL
+00E1,D9 FC,,    DJNZ R1, AGUA_LOOP1
+00E3,C2 A0,,    CLR AGUA
+,,,
+,,,    ; Nitrógeno: 3s (60 ciclos)
+00E5,7A 3C,,    MOV R2, #60
+00E7,D2 A1,,    SETB NITROGENO
+00E9,,NITROGENO_LOOP1,NITROGENO_LOOP1:
+00E9,11 30,,    ACALL DELAY_50MIL
+00EB,DA FC,,    DJNZ R2, NITROGENO_LOOP1
+00ED,C2 A1,,    CLR NITROGENO
+,,,
+,,,    ; Fósforo: 2s (40 ciclos)
+00EF,7B 28,,    MOV R3, #40
+00F1,D2 A2,,    SETB FOSFORO
+00F3,,FOSFORO_LOOP1,FOSFORO_LOOP1:
+00F3,11 30,,    ACALL DELAY_50MIL
+00F5,DB FC,,    DJNZ R3, FOSFORO_LOOP1
+00F7,C2 A2,,    CLR FOSFORO
+,,,
+,,,    ; Potasio: 2s (40 ciclos)
+00F9,7C 28,,    MOV R4, #40
+00FB,D2 A3,,    SETB POTASIO
+00FD,,POTASIO_LOOP1,POTASIO_LOOP1:
+00FD,11 30,,    ACALL DELAY_50MIL
+00FF,DC FC,,    DJNZ R4, POTASIO_LOOP1
+0101,C2 A3,,    CLR POTASIO
+0103,22,,    RET
+,,,
+0104,,EJECUTAR_RECETA2,EJECUTAR_RECETA2:
+,,,    ;-------------------- RECETA 2 -----------------------
+,,,    ; Frecuencia: cada 60 minutos
+,,,    ; Agua: 5s, Nitrógeno: 2s, Fósforo: 3s, Potasio: 3s
+,,,
+,,,    ; Agua: 5s (100 ciclos)
+0104,79 64,,    MOV R1, #100
+0106,D2 A0,,    SETB AGUA
+0108,,AGUA_LOOP2,AGUA_LOOP2:
+0108,11 30,,    ACALL DELAY_50MIL
+010A,D9 FC,,    DJNZ R1, AGUA_LOOP2
+010C,C2 A0,,    CLR AGUA
+,,,
+,,,    ; Nitrógeno: 2s (40 ciclos)
+010E,7A 28,,    MOV R2, #40
+0110,D2 A1,,    SETB NITROGENO
+0112,,NITROGENO_LOOP2,NITROGENO_LOOP2:
+0112,11 30,,    ACALL DELAY_50MIL
+0114,DA FC,,    DJNZ R2, NITROGENO_LOOP2
+0116,C2 A1,,    CLR NITROGENO
+,,,
+,,,    ; Fósforo: 3s (60 ciclos)
+0118,7B 3C,,    MOV R3, #60
+011A,D2 A2,,    SETB FOSFORO
+011C,,FOSFORO_LOOP2,FOSFORO_LOOP2:
+011C,11 30,,    ACALL DELAY_50MIL
+011E,DB FC,,    DJNZ R3, FOSFORO_LOOP2
+0120,C2 A2,,    CLR FOSFORO
+,,,
+,,,    ; Potasio: 3s (60 ciclos)
+0122,7C 3C,,    MOV R4, #60
+0124,D2 A3,,    SETB POTASIO
+0126,,POTASIO_LOOP2,POTASIO_LOOP2:
+0126,11 30,,    ACALL DELAY_50MIL
+0128,DC FC,,    DJNZ R4, POTASIO_LOOP2
+012A,C2 A3,,    CLR POTASIO
+012C,22,,    RET
+,,,
+000E,,,END
